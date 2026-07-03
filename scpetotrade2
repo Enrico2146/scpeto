@@ -1,5 +1,5 @@
 -- ============================================
--- TRADE MAIL GUI (ATTRIBUTE VALUE EXTRACTOR v5)
+-- TRADE MAIL GUI (GEAR SERIAL ID EXTRACTOR v6)
 -- ============================================
 
 local RS      = game:GetService("ReplicatedStorage")
@@ -33,18 +33,33 @@ local GEAR_NAMES = {
     ["Super Sprinkler"]       = true
 }
 
+-- EKSTRAKSI KUNCI ASLI DARI SERVER UNTUK GEARS
 local function resolveItem(tool)
     local name = tool.Name
-    local uuid = tool:GetAttribute("PetId") or tool:GetAttribute("Id") or tool:GetAttribute("UUID")
-    if uuid then return "Pets", uuid end
-    if GEAR_NAMES[name] then return "Gears", name end
     
-    local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
-    if attrCat then
-        if tostring(attrCat) == "Gear" then attrCat = "Gears" end
-        return tostring(attrCat), name
+    -- 1. Cek ID Unik bawaan Pet / Gears khusus
+    local uuid = tool:GetAttribute("PetId") 
+        or tool:GetAttribute("Id") 
+        or tool:GetAttribute("UUID")
+        or tool:GetAttribute("AssetId")
+        or tool:GetAttribute("ItemID")
+        or tool:GetAttribute("TemplateID")
+    
+    -- 2. Tentukan kategori dasar
+    local category = "Seeds"
+    if GEAR_NAMES[name] then
+        category = "Gears"
+    else
+        local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
+        if attrCat then
+            category = tostring(attrCat)
+            if category == "Gear" then category = "Gears" end
+        end
     end
-    return "Seeds", name
+    
+    -- Jika kategori Gears tapi game butuh ID unik/serial, pakai uuid-nya. Kalau gak ada, baru pakai namanya.
+    local finalKey = (category == "Gears" and uuid) and tostring(uuid) or name
+    return category, finalKey
 end
 
 local Net = nil
@@ -63,21 +78,17 @@ local function getUserId(username)
     return ok and uid or nil
 end
 
--- AMBIL ITEM DENGAN DETEKSI DOUBLE VALUE COUNT
 local function getInventoryItems()
     local items = {}
-    
     local function scanContainer(container)
         for _, tool in pairs(container:GetChildren()) do
             if tool:IsA("Tool") then
-                -- Cek apakah ada atribut jumlah tumpukan tersembunyi khusus dari game
                 local internalCount = tool:GetAttribute("Count")
                     or tool:GetAttribute("Stack")
                     or tool:GetAttribute("Amount")
                     or tool:GetAttribute("Quantity")
                     or tool:GetAttribute("Uses")
                     or 1
-                
                 internalCount = math.max(tonumber(internalCount) or 1, 1)
                 
                 table.insert(items, {
@@ -88,7 +99,6 @@ local function getInventoryItems()
             end
         end
     end
-    
     scanContainer(LP.Backpack)
     if LP.Character then scanContainer(LP.Character) end
     return items
@@ -245,8 +255,6 @@ local function populateDropdown()
     end
 
     local rawItems = getInventoryItems()
-    
-    -- Satukan item berdasarkan nama, jumlahnya ditotal berdasarkan value asli
     local merged = {}
     local uniqueList = {}
 
@@ -262,7 +270,7 @@ local function populateDropdown()
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(1, 0, 0, 34)
         empty.BackgroundTransparency = 1
-        empty.Text = "Pegang / Taruh item di Hotbar dulu!"
+        empty.Text = "Taruh item di Hotbar bawah dulu!"
         empty.TextColor3 = Color3.fromRGB(220, 100, 100)
         empty.TextSize = 12
         empty.Font = Enum.Font.Gotham
@@ -349,7 +357,7 @@ sendBtn.MouseButton1Click:Connect(function()
 
     local amount = math.floor(tonumber(amountBox.Text) or 0)
     if amount <= 0 then setStatus("Amount harus lebih dari 0!", false) return end
-    if amount > selectedItem.count then setStatus("Amount melebihi stok rill!", false) return end
+    if amount > selectedItem.count then setStatus("Amount melebihi stok!", false) return end
 
     isSending = true
     sendBtn.Text = "Sending..."
@@ -364,26 +372,21 @@ sendBtn.MouseButton1Click:Connect(function()
 
         local category, itemKey = resolveItem(selectedItem.tool)
 
-        -- ==========================================================
-        -- FORMULASI TOTAL UTK GEARES BERDASARKAN TOTAL INT VALUE
-        -- ==========================================================
         local payload = {}
         if category == "Gears" then
-            -- Server akan membaca pemotongan jumlah tumpukan dari total Count yang dikirim
+            -- Kirim payload dengan Serial ID / AssetID hasil ekstraksi otomatis
             table.insert(payload, {
                 ItemKey  = itemKey,
                 Category = "Gears",
                 Count    = amount
             })
         else
-            -- Sistem tumpukan normal untuk Seeds / Pets
             payload = {{
                 ItemKey  = itemKey,
                 Count    = amount,
                 Category = category,
             }}
         end
-        -- ==========================================================
 
         local sendOk, sendErr = sendInChunks(userId, payload)
         if sendOk then
