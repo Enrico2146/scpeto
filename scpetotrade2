@@ -2,8 +2,8 @@ local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LP = Players.LocalPlayer
 
+-- ================= NET =================
 local Net = nil
-
 local function getNet()
     if Net then return Net end
     pcall(function()
@@ -14,53 +14,70 @@ local function getNet()
     return Net
 end
 
+-- ================= DATA =================
+local selectedItem = nil
+local isSending = false
+
 local GEAR_NAMES = {
     ["Common Watering Can"] = true,
     ["Common Sprinkler"] = true,
     ["Uncommon Sprinkler"] = true,
     ["Rare Sprinkler"] = true,
     ["Legendary Sprinkler"] = true,
-    ["Super Sprinkler"] = true,
 }
 
-local function getUserId(username)
+-- ================= UI =================
+local gui = Instance.new("ScreenGui", game.CoreGui)
+gui.Name = "TradeMail_FIX"
+
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 300, 0, 200)
+frame.Position = UDim2.new(0.5, -150, 0.5, -100)
+frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+
+local nameBox = Instance.new("TextBox", frame)
+nameBox.Size = UDim2.new(1, -20, 0, 30)
+nameBox.Position = UDim2.new(0, 10, 0, 10)
+nameBox.PlaceholderText = "Username"
+
+local amountBox = Instance.new("TextBox", frame)
+amountBox.Size = UDim2.new(1, -20, 0, 30)
+amountBox.Position = UDim2.new(0, 10, 0, 50)
+amountBox.PlaceholderText = "Amount"
+
+local sendBtn = Instance.new("TextButton", frame)
+sendBtn.Size = UDim2.new(1, -20, 0, 40)
+sendBtn.Position = UDim2.new(0, 10, 0, 100)
+sendBtn.Text = "SEND"
+
+local status = Instance.new("TextLabel", frame)
+status.Size = UDim2.new(1, -20, 0, 30)
+status.Position = UDim2.new(0, 10, 0, 150)
+status.Text = ""
+
+-- ================= LOGIC =================
+local function getUserId(name)
     local ok, uid = pcall(function()
-        return Players:GetUserIdFromNameAsync(username)
+        return Players:GetUserIdFromNameAsync(name)
     end)
     return ok and uid or nil
 end
 
-local function getInventory()
+local function getItems()
     local items = {}
-
-    local function scan(container)
-        for _, t in pairs(container:GetChildren()) do
-            if t:IsA("Tool") then
-                table.insert(items, t)
-            end
+    for _,t in pairs(LP.Backpack:GetChildren()) do
+        if t:IsA("Tool") then
+            table.insert(items, t)
         end
     end
-
-    scan(LP.Backpack)
-    if LP.Character then scan(LP.Character) end
-
     return items
 end
 
-local function resolveItem(tool)
+local function resolve(tool)
     local name = tool.Name
+    local uuid = tool:GetAttribute("UUID") or tool:GetAttribute("Id")
 
-    local uuid =
-        tool:GetAttribute("UUID")
-        or tool:GetAttribute("Id")
-        or tool:GetAttribute("ItemID")
-
-    local category = "Seeds"
-
-    if GEAR_NAMES[name] then
-        category = "Gear"
-    end
-
+    local category = GEAR_NAMES[name] and "Gear" or "Seeds"
     local key = (category == "Gear" and uuid) and tostring(uuid) or name
 
     return category, key
@@ -68,58 +85,54 @@ end
 
 local function send(userId, payload)
     local net = getNet()
-    if not net or not net.Mailbox then
-        return false, "Mailbox not found"
-    end
+    if not net or not net.Mailbox then return false end
 
-    local ok, err = pcall(function()
+    local ok = pcall(function()
         net.Mailbox.SendBatch:Fire(userId, payload, "")
     end)
 
-    return ok, err
+    return ok
 end
 
--- ================= GUI STATE =================
-local isSending = false
-local selectedItem = nil
-
--- ================= MAIN SEND =================
-local function sendTrade(recipient, amount)
+-- ================= CLICK =================
+sendBtn.MouseButton1Click:Connect(function()
     if isSending then return end
     isSending = true
 
-    local userId = getUserId(recipient)
+    local username = nameBox.Text
+    local amount = tonumber(amountBox.Text) or 1
+
+    local userId = getUserId(username)
     if not userId then
-        print("[ERROR] User not found")
+        status.Text = "User tidak ditemukan"
         isSending = false
         return
     end
 
-    if not selectedItem then
-        print("[ERROR] No item selected")
+    local items = getItems()
+    local tool = items[1]
+
+    if not tool then
+        status.Text = "No item"
         isSending = false
         return
     end
 
-    local category, key = resolveItem(selectedItem.tool)
+    local category, key = resolve(tool)
 
     local payload = {{
-        ItemKey = tostring(key),
+        ItemKey = key,
         Category = category,
-        Count = tonumber(amount)
+        Count = amount
     }}
 
-    print("[TRADE] Sending:", selectedItem.tool.Name, category, key)
-
-    local ok, err = send(userId, payload)
-
-    task.wait(1.5)
+    local ok = send(userId, payload)
 
     if ok then
-        print("[TRADE] Request sent (NOT CONFIRMED SERVER SUCCESS)")
+        status.Text = "Request sent"
     else
-        print("[TRADE] Failed:", err)
+        status.Text = "Failed send"
     end
 
     isSending = false
-end
+end)
