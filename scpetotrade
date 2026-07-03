@@ -47,9 +47,9 @@ local function resolveItem(tool)
         return "Pets", uuid
     end
 
-    -- 2. Gear? (Dinaikkan ke sini agar mendeteksi Sprinkler terlebih dahulu sebelum attribute game)
+    -- 2. Gear? (Sudah ditambahkan huruf 's' agar sesuai dengan database server game)
     if GEAR_NAMES[name] then
-        return "Gear", name
+        return "Gears", name
     end
 
     -- 3. Kategori eksplisit dari attribute (kalau game menyediakannya)
