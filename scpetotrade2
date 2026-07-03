@@ -1,5 +1,5 @@
 -- ============================================
--- TRADE MAIL GUI (FIXED GEARS & SPRINKLERS)
+-- TRADE MAIL GUI (FIXED GEARS v3)
 -- ============================================
 
 local RS      = game:GetService("ReplicatedStorage")
@@ -8,146 +8,97 @@ local LP      = Players.LocalPlayer
 
 local MAX_PER_BATCH = 20
 
--- Daftar gear (kecil & tetap). Selain gear & pet dianggap Seeds.
+-- Daftar gear tetap
 local GEAR_NAMES = {
     ["Common Watering Can"]   = true,
-    ["Common Sprinkler"]         = true,
-    ["Sign"]  = true,
+    ["Common Sprinkler"]      = true,
+    ["Sign"]                  = true,
     ["Uncommon Sprinkler"]    = true,
-    ["Trowel"] = true,
-    ["Rare Sprinkler"]    = true,
-    ["Jump Mushroom"]   = true,
-    ["Speed Mushroom"]      = true,
-    ["Megaphone"]      = true,
+    ["Trowel"]                = true,
+    ["Rare Sprinkler"]        = true,
+    ["Jump Mushroom"]         = true,
+    ["Speed Mushroom"]        = true,
+    ["Megaphone"]             = true,
     ["Shrink Mushroom"]       = true,
-    ["Supersize Mushroom"]     = true,
-    ["Gnome"]     = true,
-    ["Flashbang"] = true,
-    ["Basic Pot"] = true,
+    ["Supersize Mushroom"]    = true,
+    ["Gnome"]                 = true,
+    ["Flashbang"]             = true,
+    ["Basic Pot"]             = true,
     ["Invisibility Mushroom"] = true,
-    ["Legendary Sprinkler"] = true,
-    ["Wheelbarrow"] = true,
-    ["Player Magnet"] = true,
-    ["Strawberry Sniper"] = true,
-    ["Super Watering Can"] = true,
-    ["Super Sprinkler"] = true
+    ["Legendary Sprinkler"]   = true,
+    ["Wheelbarrow"]           = true,
+    ["Player Magnet"]         = true,
+    ["Strawberry Sniper"]     = true,
+    ["Super Watering Can"]    = true,
+    ["Super Sprinkler"]       = true
 }
 
--- Tentukan kategori dari tool.
 local function resolveItem(tool)
     local name = tool.Name
 
-    -- 1. Pet? Punya attribute UUID
-    local uuid = tool:GetAttribute("PetId")
-        or tool:GetAttribute("Id")
-        or tool:GetAttribute("UUID")
+    local uuid = tool:GetAttribute("PetId") or tool:GetAttribute("Id") or tool:GetAttribute("UUID")
     if uuid then
         return "Pets", uuid
     end
 
-    -- 2. Gear? Cocokkan dengan daftar GEAR_NAMES (Pakai kategori "Gears" dengan 's')
     if GEAR_NAMES[name] then
         return "Gears", name
     end
 
-    -- 3. Kategori eksplisit dari attribute game
     local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
     if attrCat then
         if tostring(attrCat) == "Gear" then attrCat = "Gears" end
         return tostring(attrCat), name
     end
 
-    -- 4. Default: Seeds
     return "Seeds", name
 end
 
--- ============================================
--- LOAD NETWORKING MODULE
--- ============================================
-
 local Net = nil
-
 local function getNet()
     if Net then return Net end
     local ok, result = pcall(function()
         local sm = RS:WaitForChild("SharedModules", 10)
-        if not sm then return nil end
         local nw = sm:WaitForChild("Networking", 10)
-        if not nw then return nil end
         return require(nw)
     end)
-    if ok and result then
-        Net = result
-    else
-        warn("[TradeMail] Gagal load Networking: " .. tostring(result))
-    end
+    if ok and result then Net = result end
     return Net
 end
-
--- ============================================
--- UTILITY
--- ============================================
 
 local function getUserId(username)
     local ok, uid = pcall(Players.GetUserIdFromNameAsync, Players, username)
     return ok and uid or nil
 end
 
--- Ambil semua tool dari backpack
 local function getInventoryItems()
     local items = {}
+    -- Cek di Backpack (hotbar)
     for _, tool in pairs(LP.Backpack:GetChildren()) do
         if tool:IsA("Tool") then
-            local count = tool:GetAttribute("Count")
-                or tool:GetAttribute("Stack")
-                or tool:GetAttribute("Amount")
-                or tool:GetAttribute("Quantity")
-                or 1
-            count = math.max(tonumber(count) or 1, 1)
-            table.insert(items, {
-                name  = tool.Name,
-                count = count,
-                tool  = tool,  
-            })
+            table.insert(items, { name = tool.Name, count = 1, tool = tool })
+        end
+    end
+    -- Cek juga kalau tool lagi di-equip (di genggaman karakter)
+    local char = LP.Character
+    if char then
+        for _, tool in pairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(items, { name = tool.Name, count = 1, tool = tool })
+            end
         end
     end
     return items
 end
 
--- Kirim item dalam chunks ke server
 local function sendInChunks(userId, batch)
     local net = getNet()
-    if not net or not net.Mailbox then
-        return false, "Net.Mailbox tidak tersedia"
-    end
+    if not net or not net.Mailbox then return false, "Net.Mailbox tidak tersedia" end
 
-    local total = #batch
-    local sent  = 0
-
-    for i = 1, total, MAX_PER_BATCH do
-        local chunk = {}
-        for j = i, math.min(i + MAX_PER_BATCH - 1, total) do
-            table.insert(chunk, batch[j])
-        end
-
-        local ok, err = pcall(function()
-            net.Mailbox.SendBatch:Fire(userId, chunk, "")
-        end)
-
-        if ok then
-            sent = sent + #chunk
-            print(("[TradeMail] Chunk terkirim %d/%d item"):format(sent, total))
-        else
-            warn("[TradeMail] Gagal chunk: " .. tostring(err))
-            return false, err
-        end
-
-        if i + MAX_PER_BATCH <= total then
-            task.wait(1)
-        end
-    end
-
-    return true, nil
+    local ok, err = pcall(function()
+        net.Mailbox.SendBatch:Fire(userId, batch, "")
+    end)
+    return ok, err
 end
 
 -- ============================================
@@ -158,138 +109,80 @@ local oldGui = (game:GetService("CoreGui"):FindFirstChild("TradeMailGUI")) or LP
 if oldGui then oldGui:Destroy() end
 
 local sg = Instance.new("ScreenGui")
-sg.Name         = "TradeMailGUI"
+sg.Name = "TradeMailGUI"
 sg.ResetOnSpawn = false
 pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LP:WaitForChild("PlayerGui") end
 
--- Main Frame
 local main = Instance.new("Frame")
-main.Size                = UDim2.new(0, 320, 0, 390)
-main.Position            = UDim2.new(0.5, -160, 0.5, -195)
-main.BackgroundColor3    = Color3.fromRGB(18, 18, 24)
-main.BackgroundTransparency = 0.25
-main.BorderSizePixel     = 0
-main.Active              = true
-main.Draggable           = true
-main.Parent              = sg
+main.Size = UDim2.new(0, 320, 0, 390)
+main.Position = UDim2.new(0.5, -160, 0.5, -195)
+main.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = sg
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 
--- Title Bar
 local titleBar = Instance.new("Frame")
-titleBar.Size             = UDim2.new(1, 0, 0, 40)
+titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-titleBar.BackgroundTransparency = 0.25
-titleBar.BorderSizePixel  = 0
-titleBar.Parent           = main
+titleBar.BorderSizePixel = 0
+titleBar.Parent = main
 Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
 
 local title = Instance.new("TextLabel")
-title.Size               = UDim2.new(1, -85, 1, 0)
-title.Position           = UDim2.new(0, 12, 0, 0)
+title.Size = UDim2.new(1, -40, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
 title.BackgroundTransparency = 1
-title.Text               = "Trade Mail by Petss"
-title.TextColor3         = Color3.fromRGB(255, 255, 255)
-title.TextSize           = 15
-title.Font               = Enum.Font.GothamBold
-title.TextXAlignment     = Enum.TextXAlignment.Left
-title.Parent             = titleBar
+title.Text = "Trade Mail by Petss"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 14
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
 
--- Minimize Button
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Size             = UDim2.new(0, 28, 0, 28)
-minimizeBtn.Position         = UDim2.new(1, -68, 0.5, -14)
-minimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
-minimizeBtn.BackgroundTransparency = 0.2
-minimizeBtn.Text             = "—"
-minimizeBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
-minimizeBtn.TextSize         = 16
-minimizeBtn.Font             = Enum.Font.GothamBold
-minimizeBtn.BorderSizePixel  = 0
-minimizeBtn.Parent           = titleBar
-Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0, 6)
-
--- Close Button
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size             = UDim2.new(0, 28, 0, 28)
-closeBtn.Position         = UDim2.new(1, -34, 0.5, -14)
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -34, 0.5, -14)
 closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-closeBtn.BackgroundTransparency = 0.2
-closeBtn.Text             = "X"
-closeBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
-closeBtn.TextSize         = 12
-closeBtn.Font             = Enum.Font.GothamBold
-closeBtn.BorderSizePixel  = 0
-closeBtn.Parent           = titleBar
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = titleBar
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
-closeBtn.MouseButton1Click:Connect(function()
-    sg:Destroy()
-end)
-
--- Minimize Icon
-local minimizedIcon = Instance.new("ImageButton")
-minimizedIcon.Name              = "MinimizedIcon"
-minimizedIcon.Size               = UDim2.new(0, 50, 0, 50)
-minimizedIcon.Position           = UDim2.new(0.5, -25, 0.5, -25)
-minimizedIcon.BackgroundColor3   = Color3.fromRGB(18, 18, 24)
-minimizedIcon.BackgroundTransparency = 0.15
-minimizedIcon.BorderSizePixel    = 0
-minimizedIcon.Image              = "rbxassetid://116056354483334"
-minimizedIcon.ScaleType          = Enum.ScaleType.Crop
-minimizedIcon.Active             = true
-minimizedIcon.Draggable          = true
-minimizedIcon.Visible            = false
-minimizedIcon.ZIndex             = 50
-minimizedIcon.Parent             = sg
-Instance.new("UICorner", minimizedIcon).CornerRadius = UDim.new(1, 0)
-
-local iconStroke = Instance.new("UIStroke")
-iconStroke.Color     = Color3.fromRGB(255, 255, 255)
-iconStroke.Thickness = 1.5
-iconStroke.Transparency = 0.4
-iconStroke.Parent   = minimizedIcon
-
-minimizeBtn.MouseButton1Click:Connect(function()
-    main.Visible          = false
-    minimizedIcon.Visible = true
-end)
-
-minimizedIcon.MouseButton1Click:Connect(function()
-    minimizedIcon.Visible = false
-    main.Visible           = true
-end)
-
--- Builders
 local function makeLabel(text, posY)
     local lbl = Instance.new("TextLabel")
-    lbl.Size               = UDim2.new(1, -20, 0, 18)
-    lbl.Position           = UDim2.new(0, 10, 0, posY)
+    lbl.Size = UDim2.new(1, -20, 0, 18)
+    lbl.Position = UDim2.new(0, 10, 0, posY)
     lbl.BackgroundTransparency = 1
-    lbl.Text               = text
-    lbl.TextColor3         = Color3.fromRGB(160, 160, 180)
-    lbl.TextSize           = 12
-    lbl.Font               = Enum.Font.Gotham
-    lbl.TextXAlignment     = Enum.TextXAlignment.Left
-    lbl.Parent             = main
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(160, 160, 180)
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = main
     return lbl
 end
 
 local function makeTextBox(placeholder, posY)
     local box = Instance.new("TextBox")
-    box.Size              = UDim2.new(1, -20, 0, 34)
-    box.Position          = UDim2.new(0, 10, 0, posY)
-    box.BackgroundColor3  = Color3.fromRGB(30, 30, 42)
-    box.BackgroundTransparency = 0.35
-    box.BorderSizePixel   = 0
-    box.PlaceholderText   = placeholder
+    box.Size = UDim2.new(1, -20, 0, 34)
+    box.Position = UDim2.new(0, 10, 0, posY)
+    box.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+    box.BorderSizePixel = 0
+    box.PlaceholderText = placeholder
     box.PlaceholderColor3 = Color3.fromRGB(90, 90, 110)
-    box.Text              = ""
-    box.TextColor3        = Color3.fromRGB(220, 220, 220)
-    box.TextSize          = 13
-    box.Font              = Enum.Font.Gotham
-    box.ClearTextOnFocus  = false
-    box.Parent            = main
+    box.Text = ""
+    box.TextColor3 = Color3.fromRGB(220, 220, 220)
+    box.TextSize = 13
+    box.Font = Enum.Font.Gotham
+    box.ClearTextOnFocus = false
+    box.Parent = main
     Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
     local pad = Instance.new("UIPadding")
     pad.PaddingLeft = UDim.new(0, 10)
@@ -302,45 +195,39 @@ local recipientBox = makeTextBox("Masukkan username...", 72)
 
 makeLabel("Item:", 120)
 local dropBtn = Instance.new("TextButton")
-dropBtn.Size             = UDim2.new(1, -20, 0, 34)
-dropBtn.Position         = UDim2.new(0, 10, 0, 140)
+dropBtn.Size = UDim2.new(1, -20, 0, 34)
+dropBtn.Position = UDim2.new(0, 10, 0, 140)
 dropBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
-dropBtn.BackgroundTransparency = 0.35
-dropBtn.Text             = "Pilih item..."
-dropBtn.TextColor3       = Color3.fromRGB(90, 90, 110)
-dropBtn.TextSize         = 13
-dropBtn.Font             = Enum.Font.Gotham
-dropBtn.TextXAlignment   = Enum.TextXAlignment.Left
-dropBtn.BorderSizePixel  = 0
-dropBtn.Parent           = main
+dropBtn.Text = "Pilih item..."
+dropBtn.TextColor3 = Color3.fromRGB(90, 90, 110)
+dropBtn.TextSize = 13
+dropBtn.Font = Enum.Font.Gotham
+dropBtn.TextXAlignment = Enum.TextXAlignment.Left
+dropBtn.BorderSizePixel = 0
+dropBtn.Parent = main
 Instance.new("UICorner", dropBtn).CornerRadius = UDim.new(0, 6)
 local dropBtnPad = Instance.new("UIPadding")
 dropBtnPad.PaddingLeft = UDim.new(0, 10)
 dropBtnPad.Parent = dropBtn
 
 local dropList = Instance.new("Frame")
-dropList.Size             = UDim2.new(1, -20, 0, 0)
-dropList.Position         = UDim2.new(0, 10, 0, 176)
-dropList.BackgroundColor3 = Color3.fromRGB(255, 25, 35)
-dropList.BackgroundTransparency = 0.3
-dropList.BorderSizePixel  = 0
+dropList.Size = UDim2.new(1, -20, 0, 0)
+dropList.Position = UDim2.new(0, 10, 0, 176)
+dropList.BackgroundColor3 = Color3.fromRGB(24, 24, 36)
+dropList.BorderSizePixel = 0
 dropList.ClipsDescendants = true
-dropList.ZIndex           = 20
-dropList.Parent           = main
+dropList.ZIndex = 20
+dropList.Parent = main
 Instance.new("UICorner", dropList).CornerRadius = UDim.new(0, 6)
 
 local dropScroll = Instance.new("ScrollingFrame")
-dropScroll.Size                 = UDim2.new(1, 0, 1, 0)
+dropScroll.Size = UDim2.new(1, 0, 1, 0)
 dropScroll.BackgroundTransparency = 1
-dropScroll.BorderSizePixel      = 0
-dropScroll.ScrollBarThickness   = 4
-dropScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 120)
-dropScroll.ZIndex               = 20
-dropScroll.Parent               = dropList
-
-local dropLayout = Instance.new("UIListLayout")
-dropLayout.SortOrder = Enum.SortOrder.LayoutOrder
-dropLayout.Parent    = dropScroll
+dropScroll.BorderSizePixel = 0
+dropScroll.ScrollBarThickness = 4
+dropScroll.ZIndex = 20
+dropScroll.Parent = dropList
+Instance.new("UIListLayout", dropScroll).SortOrder = Enum.SortOrder.LayoutOrder
 
 local selectedItem = nil
 local dropOpen     = false
@@ -356,165 +243,138 @@ local function populateDropdown()
     end
 
     local items = getInventoryItems()
-    if #items == 0 then
+    
+    -- Hitung jumlah per nama item unik
+    local counts = {}
+    local uniqueItems = {}
+    for _, it in pairs(items) do
+        if not counts[it.name] then
+            counts[it.name] = 0
+            table.insert(uniqueItems, it)
+        end
+        counts[it.name] = counts[it.name] + 1
+    end
+
+    if #uniqueItems == 0 then
         local empty = Instance.new("TextLabel")
-        empty.Size               = UDim2.new(1, 0, 0, 34)
+        empty.Size = UDim2.new(1, 0, 0, 34)
         empty.BackgroundTransparency = 1
-        empty.Text               = "Inventory kosong"
-        empty.TextColor3         = Color3.fromRGB(120, 120, 140)
-        empty.TextSize           = 12
-        empty.Font               = Enum.Font.Gotham
-        empty.ZIndex             = 20
-        empty.LayoutOrder        = 1
-        empty.Parent             = dropScroll
-        dropScroll.CanvasSize    = UDim2.new(0, 0, 0, 34)
+        empty.Text = "Taruh item di Hotbar bawah dulu!"
+        empty.TextColor3 = Color3.fromRGB(220, 100, 100)
+        empty.TextSize = 12
+        empty.Font = Enum.Font.Gotham
+        empty.ZIndex = 20
+        empty.Parent = dropScroll
+        dropScroll.CanvasSize = UDim2.new(0, 0, 0, 34)
         return 0
     end
 
-    for idx, item in ipairs(items) do
+    for idx, item in ipairs(uniqueItems) do
+        local totalCount = counts[item.name]
         local btn = Instance.new("TextButton")
-        btn.Size             = UDim2.new(1, 0, 0, 34)
-        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
-        btn.BackgroundTransparency = 0.35
-        btn.Text             = item.name .. "  (x" .. item.count .. ")"
-        btn.TextColor3       = Color3.fromRGB(210, 210, 225)
-        btn.TextSize         = 12
-        btn.Font             = Enum.Font.Gotham
-        btn.BorderSizePixel  = 0
-        btn.ZIndex           = 20
-        btn.LayoutOrder      = idx
-        btn.Parent           = dropScroll
-
+        btn.Size = UDim2.new(1, 0, 0, 34)
+        btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+        btn.Text = item.name .. "  (x" .. totalCount .. ")"
+        btn.TextColor3 = Color3.fromRGB(210, 210, 225)
+        btn.TextSize = 12
+        btn.Font = Enum.Font.Gotham
+        btn.BorderSizePixel = 0
+        btn.ZIndex = 20
+        btn.LayoutOrder = idx
+        btn.Parent = dropScroll
+        
         local pad = Instance.new("UIPadding")
         pad.PaddingLeft = UDim.new(0, 10)
-        pad.Parent      = btn
+        pad.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
-            selectedItem       = item
-            dropBtn.Text       = item.name .. "  (x" .. item.count .. ")"
+            selectedItem = item
+            selectedItem.count = totalCount -- update total count riil
+            dropBtn.Text = item.name .. "  (x" .. totalCount .. ")"
             dropBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
             closeDropdown()
         end)
     end
 
-    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #items * 34)
-    return #items
+    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #uniqueItems * 34)
+    return #uniqueItems
 end
 
 dropBtn.MouseButton1Click:Connect(function()
-    if dropOpen then
-        closeDropdown()
-    else
+    if dropOpen then closeDropdown() else
         local count = populateDropdown()
         dropOpen = true
-        local visibleRows = math.min(count == 0 and 1 or count, 4)
-        dropList.Size = UDim2.new(1, -20, 0, visibleRows * 34)
+        dropList.Size = UDim2.new(1, -20, 0, math.min(count == 0 and 1 or count, 4) * 34)
     end
 end)
 
 makeLabel("Amount:", 230)
 local amountBox = makeTextBox("1", 250)
-amountBox.Text = "1"
 
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Size               = UDim2.new(1, -20, 0, 24)
-statusLbl.Position           = UDim2.new(0, 10, 0, 298)
+statusLbl.Size = UDim2.new(1, -20, 0, 24)
+statusLbl.Position = UDim2.new(0, 10, 0, 298)
 statusLbl.BackgroundTransparency = 1
-statusLbl.Text               = ""
-statusLbl.TextColor3         = Color3.fromRGB(100, 200, 120)
-statusLbl.TextSize           = 12
-statusLbl.Font               = Enum.Font.Gotham
-statusLbl.TextXAlignment     = Enum.TextXAlignment.Center
-statusLbl.Parent             = main
+statusLbl.Text = ""
+statusLbl.TextSize = 12
+statusLbl.Font = Enum.Font.Gotham
+statusLbl.Parent = main
 
 local function setStatus(msg, success)
-    statusLbl.Text       = msg
+    statusLbl.Text = msg
     statusLbl.TextColor3 = success and Color3.fromRGB(100, 210, 130) or Color3.fromRGB(220, 80, 80)
 end
 
--- ============================================
--- BUTTON SEND & LOGIC INJEKSI BARU
--- ============================================
-
 local sendBtn = Instance.new("TextButton")
-sendBtn.Size             = UDim2.new(1, -20, 0, 42)
-sendBtn.Position         = UDim2.new(0, 10, 0, 334)
+sendBtn.Size = UDim2.new(1, -20, 0, 42)
+sendBtn.Position = UDim2.new(0, 10, 0, 334)
 sendBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
-sendBtn.BackgroundTransparency = 0.15
-sendBtn.Text             = "Send Trade"
-sendBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
-sendBtn.TextSize         = 14
-sendBtn.Font             = Enum.Font.GothamBold
-sendBtn.BorderSizePixel  = 0
-sendBtn.Parent           = main
+sendBtn.Text = "Send Trade"
+sendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+sendBtn.TextSize = 14
+sendBtn.Font = Enum.Font.GothamBold
+sendBtn.BorderSizePixel = 0
+sendBtn.Parent = main
 Instance.new("UICorner", sendBtn).CornerRadius = UDim.new(0, 8)
 
 local isSending = false
-
 sendBtn.MouseButton1Click:Connect(function()
     if isSending then return end
 
     local recipient = recipientBox.Text:match("^%s*(.-)%s*$")
-    if recipient == "" then
-        setStatus("Masukkan username penerima!", false)
-        return
-    end
-
-    if not selectedItem then
-        setStatus("Pilih item dulu!", false)
-        return
-    end
+    if recipient == "" then setStatus("Masukkan username penerima!", false) return end
+    if not selectedItem then setStatus("Pilih item dulu!", false) return end
 
     local amount = math.floor(tonumber(amountBox.Text) or 0)
-    if amount <= 0 then
-        setStatus("Amount harus lebih dari 0!", false)
-        return
-    end
-    if amount > selectedItem.count then
-        setStatus("Amount melebihi stok (" .. selectedItem.count .. ")!", false)
-        return
-    end
+    if amount <= 0 then setStatus("Amount harus lebih dari 0!", false) return end
+    if amount > selectedItem.count then setStatus("Amount melebihi stok di hotbar!", false) return end
 
     isSending = true
-    sendBtn.Text             = "Sending..."
+    sendBtn.Text = "Sending..."
     sendBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 100)
-    setStatus("", true)
 
     task.spawn(function()
         local userId = getUserId(recipient)
         if not userId then
             setStatus("Username tidak ditemukan!", false)
-            sendBtn.Text             = "Send Trade"
-            sendBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
-            isSending = false
-            return
+            sendBtn.Text = "Send Trade"; isSending = false return
         end
 
-        local itemKey   = selectedItem.name
-        local category  = "Seeds"
-        local toolRef   = selectedItem.tool
-
-        if toolRef and toolRef.Parent then
-            category, itemKey = resolveItem(toolRef)
-        end
+        local category, itemKey = resolveItem(selectedItem.tool)
 
         -- ==========================================================
-        -- ROMBAKAN UTAMA: STRUKTUR PAYLOAD KHUSUS GEARS
+        -- FORMULASI DATA FIX UNTUK GEARES (MENGGUNAKAN STRING KEY)
         -- ==========================================================
         local payload = {}
-        
         if category == "Gears" then
-            -- Server membutuhkan referensi data unik objek asli, bukan teks stack
             for i = 1, amount do
                 table.insert(payload, {
-                    ItemKey  = toolRef,        -- Mengirim objek Tool langsung jika text ditolak
+                    ItemKey  = itemKey,   -- Mengirim Nama String ("Common Sprinkler")
                     Category = "Gears",
-                    Count    = 1,              -- Gears dikirim per-biji (bukan ditumpuk)
-                    ItemName = itemKey
+                    Count    = 1
                 })
             end
         else
-            -- Format Normal untuk Seeds dan Pets
             payload = {{
                 ItemKey  = itemKey,
                 Count    = amount,
@@ -524,18 +384,16 @@ sendBtn.MouseButton1Click:Connect(function()
         -- ==========================================================
 
         local sendOk, sendErr = sendInChunks(userId, payload)
-
         if sendOk then
             setStatus("Berhasil dikirim ke " .. recipient .. "!", true)
-            selectedItem       = nil
-            dropBtn.Text       = "Pilih item..."
-            dropBtn.TextColor3 = Color3.fromRGB(90, 90, 110)
-            amountBox.Text     = "1"
+            selectedItem = nil
+            dropBtn.Text = "Pilih item..."
+            amountBox.Text = "1"
         else
             setStatus("Gagal: " .. tostring(sendErr), false)
         end
 
-        sendBtn.Text             = "Send Trade"
+        sendBtn.Text = "Send Trade"
         sendBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
         isSending = false
     end)
