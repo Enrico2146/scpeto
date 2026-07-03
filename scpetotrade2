@@ -1,5 +1,5 @@
 -- ============================================
--- TRADE MAIL GUI (AUTO-COLLECT GEARS v4)
+-- TRADE MAIL GUI (ATTRIBUTE VALUE EXTRACTOR v5)
 -- ============================================
 
 local RS      = game:GetService("ReplicatedStorage")
@@ -63,15 +63,27 @@ local function getUserId(username)
     return ok and uid or nil
 end
 
--- Ambil semua item dari Backpack & Karakter secara mendetail
+-- AMBIL ITEM DENGAN DETEKSI DOUBLE VALUE COUNT
 local function getInventoryItems()
     local items = {}
+    
     local function scanContainer(container)
         for _, tool in pairs(container:GetChildren()) do
             if tool:IsA("Tool") then
+                -- Cek apakah ada atribut jumlah tumpukan tersembunyi khusus dari game
+                local internalCount = tool:GetAttribute("Count")
+                    or tool:GetAttribute("Stack")
+                    or tool:GetAttribute("Amount")
+                    or tool:GetAttribute("Quantity")
+                    or tool:GetAttribute("Uses")
+                    or 1
+                
+                internalCount = math.max(tonumber(internalCount) or 1, 1)
+                
                 table.insert(items, {
-                    name = tool.Name,
-                    tool = tool
+                    name  = tool.Name,
+                    count = internalCount,
+                    tool  = tool
                 })
             end
         end
@@ -219,8 +231,8 @@ dropScroll.ZIndex = 20
 dropScroll.Parent = dropList
 Instance.new("UIListLayout", dropScroll).SortOrder = Enum.SortOrder.LayoutOrder
 
-local selectedItemName = nil
-local dropOpen         = false
+local selectedItem = nil
+local dropOpen     = false
 
 local function closeDropdown()
     dropOpen = false
@@ -233,22 +245,24 @@ local function populateDropdown()
     end
 
     local rawItems = getInventoryItems()
-    local counts = {}
-    local uniqueNames = {}
+    
+    -- Satukan item berdasarkan nama, jumlahnya ditotal berdasarkan value asli
+    local merged = {}
+    local uniqueList = {}
 
     for _, it in pairs(rawItems) do
-        if not counts[it.name] then
-            counts[it.name] = 0
-            table.insert(uniqueNames, it.name)
+        if not merged[it.name] then
+            merged[it.name] = { total = 0, ref = it.tool }
+            table.insert(uniqueList, it.name)
         end
-        counts[it.name] = counts[it.name] + 1
+        merged[it.name].total = merged[it.name].total + it.count
     end
 
-    if #uniqueNames == 0 then
+    if #uniqueList == 0 then
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(1, 0, 0, 34)
         empty.BackgroundTransparency = 1
-        empty.Text = "Taruh item di Hotbar bawah dulu!"
+        empty.Text = "Pegang / Taruh item di Hotbar dulu!"
         empty.TextColor3 = Color3.fromRGB(220, 100, 100)
         empty.TextSize = 12
         empty.Font = Enum.Font.Gotham
@@ -258,12 +272,12 @@ local function populateDropdown()
         return 0
     end
 
-    for idx, name in ipairs(uniqueNames) do
-        local totalCount = counts[name]
+    for idx, name in ipairs(uniqueList) do
+        local data = merged[name]
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, 0, 0, 34)
         btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
-        btn.Text = name .. "  (x" .. totalCount .. ")"
+        btn.Text = name .. "  (x" .. data.total .. ")"
         btn.TextColor3 = Color3.fromRGB(210, 210, 225)
         btn.TextSize = 12
         btn.Font = Enum.Font.Gotham
@@ -277,15 +291,15 @@ local function populateDropdown()
         pad.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
-            selectedItemName = name
-            dropBtn.Text       = name .. "  (x" .. totalCount .. ")"
+            selectedItem = { name = name, count = data.total, tool = data.ref }
+            dropBtn.Text       = name .. "  (x" .. data.total .. ")"
             dropBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
             closeDropdown()
         end)
     end
 
-    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #uniqueNames * 34)
-    return #uniqueNames
+    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #uniqueList * 34)
+    return #uniqueList
 end
 
 dropBtn.MouseButton1Click:Connect(function()
@@ -331,24 +345,11 @@ sendBtn.MouseButton1Click:Connect(function()
 
     local recipient = recipientBox.Text:match("^%s*(.-)%s*$")
     if recipient == "" then setStatus("Masukkan username penerima!", false) return end
-    if not selectedItemName then setStatus("Pilih item dulu!", false) return end
+    if not selectedItem then setStatus("Pilih item dulu!", false) return end
 
     local amount = math.floor(tonumber(amountBox.Text) or 0)
     if amount <= 0 then setStatus("Amount harus lebih dari 0!", false) return end
-
-    -- Ambil ulang semua objek fisik kecocokan terkini
-    local allInventory = getInventoryItems()
-    local matchedTools = {}
-    for _, inv in pairs(allInventory) do
-        if inv.name == selectedItemName then
-            table.insert(matchedTools, inv.tool)
-        end
-    end
-
-    if amount > #matchedTools then
-        setStatus("Amount melebihi stok di hotbar (Stok: " .. #matchedTools .. ")!", false)
-        return
-    end
+    if amount > selectedItem.count then setStatus("Amount melebihi stok rill!", false) return end
 
     isSending = true
     sendBtn.Text = "Sending..."
@@ -361,21 +362,19 @@ sendBtn.MouseButton1Click:Connect(function()
             sendBtn.Text = "Send Trade"; isSending = false return
         end
 
-        local category, itemKey = resolveItem(matchedTools[1])
+        local category, itemKey = resolveItem(selectedItem.tool)
 
         -- ==========================================================
-        -- LOGIKA GENERATE MULTIPLE PHYSICAL OBJECT UNTUK GEARS
+        -- FORMULASI TOTAL UTK GEARES BERDASARKAN TOTAL INT VALUE
         -- ==========================================================
         local payload = {}
         if category == "Gears" then
-            -- Masukkan objek fisik Tool yang berbeda sebanyak jumlah yang diminta
-            for i = 1, amount do
-                table.insert(payload, {
-                    ItemKey  = itemKey,
-                    Category = "Gears",
-                    Count    = 1
-                })
-            end
+            -- Server akan membaca pemotongan jumlah tumpukan dari total Count yang dikirim
+            table.insert(payload, {
+                ItemKey  = itemKey,
+                Category = "Gears",
+                Count    = amount
+            })
         else
             -- Sistem tumpukan normal untuk Seeds / Pets
             payload = {{
@@ -389,7 +388,7 @@ sendBtn.MouseButton1Click:Connect(function()
         local sendOk, sendErr = sendInChunks(userId, payload)
         if sendOk then
             setStatus("Berhasil dikirim ke " .. recipient .. "!", true)
-            selectedItemName = nil
+            selectedItem = nil
             dropBtn.Text = "Pilih item..."
             amountBox.Text = "1"
         else
