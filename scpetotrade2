@@ -1,5 +1,5 @@
 -- ============================================
--- TRADE MAIL GUI (GEAR SERIAL ID EXTRACTOR v6)
+-- TRADE MAIL GUI (GEAR CATEGORY FIX v7)
 -- ============================================
 
 local RS      = game:GetService("ReplicatedStorage")
@@ -8,7 +8,7 @@ local LP      = Players.LocalPlayer
 
 local MAX_PER_BATCH = 20
 
--- Daftar gear tetap
+-- Daftar gear tetap (Kategori diselaraskan menjadi "Gear")
 local GEAR_NAMES = {
     ["Common Watering Can"]   = true,
     ["Common Sprinkler"]      = true,
@@ -33,11 +33,10 @@ local GEAR_NAMES = {
     ["Super Sprinkler"]       = true
 }
 
--- EKSTRAKSI KUNCI ASLI DARI SERVER UNTUK GEARS
+-- EKSTRAKSI KUNCI ASLI DARI SERVER UNTUK GEAR
 local function resolveItem(tool)
     local name = tool.Name
     
-    -- 1. Cek ID Unik bawaan Pet / Gears khusus
     local uuid = tool:GetAttribute("PetId") 
         or tool:GetAttribute("Id") 
         or tool:GetAttribute("UUID")
@@ -45,20 +44,18 @@ local function resolveItem(tool)
         or tool:GetAttribute("ItemID")
         or tool:GetAttribute("TemplateID")
     
-    -- 2. Tentukan kategori dasar
     local category = "Seeds"
     if GEAR_NAMES[name] then
-        category = "Gears"
+        category = "Gear"
     else
         local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
         if attrCat then
             category = tostring(attrCat)
-            if category == "Gear" then category = "Gears" end
+            if category == "Gears" then category = "Gear" end
         end
     end
     
-    -- Jika kategori Gears tapi game butuh ID unik/serial, pakai uuid-nya. Kalau gak ada, baru pakai namanya.
-    local finalKey = (category == "Gears" and uuid) and tostring(uuid) or name
+    local finalKey = (category == "Gear" and uuid) and tostring(uuid) or name
     return category, finalKey
 end
 
@@ -373,24 +370,29 @@ sendBtn.MouseButton1Click:Connect(function()
         local category, itemKey = resolveItem(selectedItem.tool)
 
         local payload = {}
-        if category == "Gears" then
-            -- Kirim payload dengan Serial ID / AssetID hasil ekstraksi otomatis
+        if category == "Gear" then
+            -- Penyelarasan MUTLAK sesuai log console game: menggunakan kategori tunggal "Gear"
             table.insert(payload, {
                 ItemKey  = itemKey,
-                Category = "Gears",
+                Category = "Gear",
                 Count    = amount
             })
+            print("[TradeMail] DEBUG Category: Gear | ItemKey: " .. tostring(itemKey))
         else
             payload = {{
                 ItemKey  = itemKey,
                 Count    = amount,
                 Category = category,
             }}
+            print("[TradeMail] DEBUG Category: " .. tostring(category) .. " | ItemKey: " .. tostring(itemKey))
         end
+
+        print("[TradeMail] Kirim: " .. tostring(selectedItem.name) .. " [" .. tostring(category) .. "] x" .. tostring(amount) .. " -> " .. recipient .. " (uid " .. tostring(userId) .. ")")
 
         local sendOk, sendErr = sendInChunks(userId, payload)
         if sendOk then
             setStatus("Berhasil dikirim ke " .. recipient .. "!", true)
+            print("[TradeMail] Chunk terkirim 1/1 item")
             selectedItem = nil
             dropBtn.Text = "Pilih item..."
             amountBox.Text = "1"
