@@ -1,5 +1,5 @@
 -- ============================================
--- TRADE MAIL GUI (FIXED GEARS v3)
+-- TRADE MAIL GUI (AUTO-COLLECT GEARS v4)
 -- ============================================
 
 local RS      = game:GetService("ReplicatedStorage")
@@ -35,34 +35,26 @@ local GEAR_NAMES = {
 
 local function resolveItem(tool)
     local name = tool.Name
-
     local uuid = tool:GetAttribute("PetId") or tool:GetAttribute("Id") or tool:GetAttribute("UUID")
-    if uuid then
-        return "Pets", uuid
-    end
-
-    if GEAR_NAMES[name] then
-        return "Gears", name
-    end
-
+    if uuid then return "Pets", uuid end
+    if GEAR_NAMES[name] then return "Gears", name end
+    
     local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
     if attrCat then
         if tostring(attrCat) == "Gear" then attrCat = "Gears" end
         return tostring(attrCat), name
     end
-
     return "Seeds", name
 end
 
 local Net = nil
 local function getNet()
     if Net then return Net end
-    local ok, result = pcall(function()
+    pcall(function()
         local sm = RS:WaitForChild("SharedModules", 10)
         local nw = sm:WaitForChild("Networking", 10)
-        return require(nw)
+        Net = require(nw)
     end)
-    if ok and result then Net = result end
     return Net
 end
 
@@ -71,30 +63,28 @@ local function getUserId(username)
     return ok and uid or nil
 end
 
+-- Ambil semua item dari Backpack & Karakter secara mendetail
 local function getInventoryItems()
     local items = {}
-    -- Cek di Backpack (hotbar)
-    for _, tool in pairs(LP.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            table.insert(items, { name = tool.Name, count = 1, tool = tool })
-        end
-    end
-    -- Cek juga kalau tool lagi di-equip (di genggaman karakter)
-    local char = LP.Character
-    if char then
-        for _, tool in pairs(char:GetChildren()) do
+    local function scanContainer(container)
+        for _, tool in pairs(container:GetChildren()) do
             if tool:IsA("Tool") then
-                table.insert(items, { name = tool.Name, count = 1, tool = tool })
+                table.insert(items, {
+                    name = tool.Name,
+                    tool = tool
+                })
             end
         end
     end
+    
+    scanContainer(LP.Backpack)
+    if LP.Character then scanContainer(LP.Character) end
     return items
 end
 
 local function sendInChunks(userId, batch)
     local net = getNet()
     if not net or not net.Mailbox then return false, "Net.Mailbox tidak tersedia" end
-
     local ok, err = pcall(function()
         net.Mailbox.SendBatch:Fire(userId, batch, "")
     end)
@@ -229,8 +219,8 @@ dropScroll.ZIndex = 20
 dropScroll.Parent = dropList
 Instance.new("UIListLayout", dropScroll).SortOrder = Enum.SortOrder.LayoutOrder
 
-local selectedItem = nil
-local dropOpen     = false
+local selectedItemName = nil
+local dropOpen         = false
 
 local function closeDropdown()
     dropOpen = false
@@ -242,20 +232,19 @@ local function populateDropdown()
         if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
     end
 
-    local items = getInventoryItems()
-    
-    -- Hitung jumlah per nama item unik
+    local rawItems = getInventoryItems()
     local counts = {}
-    local uniqueItems = {}
-    for _, it in pairs(items) do
+    local uniqueNames = {}
+
+    for _, it in pairs(rawItems) do
         if not counts[it.name] then
             counts[it.name] = 0
-            table.insert(uniqueItems, it)
+            table.insert(uniqueNames, it.name)
         end
         counts[it.name] = counts[it.name] + 1
     end
 
-    if #uniqueItems == 0 then
+    if #uniqueNames == 0 then
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(1, 0, 0, 34)
         empty.BackgroundTransparency = 1
@@ -269,12 +258,12 @@ local function populateDropdown()
         return 0
     end
 
-    for idx, item in ipairs(uniqueItems) do
-        local totalCount = counts[item.name]
+    for idx, name in ipairs(uniqueNames) do
+        local totalCount = counts[name]
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, 0, 0, 34)
         btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
-        btn.Text = item.name .. "  (x" .. totalCount .. ")"
+        btn.Text = name .. "  (x" .. totalCount .. ")"
         btn.TextColor3 = Color3.fromRGB(210, 210, 225)
         btn.TextSize = 12
         btn.Font = Enum.Font.Gotham
@@ -288,16 +277,15 @@ local function populateDropdown()
         pad.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
-            selectedItem = item
-            selectedItem.count = totalCount -- update total count riil
-            dropBtn.Text = item.name .. "  (x" .. totalCount .. ")"
+            selectedItemName = name
+            dropBtn.Text       = name .. "  (x" .. totalCount .. ")"
             dropBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
             closeDropdown()
         end)
     end
 
-    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #uniqueItems * 34)
-    return #uniqueItems
+    dropScroll.CanvasSize = UDim2.new(0, 0, 0, #uniqueNames * 34)
+    return #uniqueNames
 end
 
 dropBtn.MouseButton1Click:Connect(function()
@@ -343,11 +331,24 @@ sendBtn.MouseButton1Click:Connect(function()
 
     local recipient = recipientBox.Text:match("^%s*(.-)%s*$")
     if recipient == "" then setStatus("Masukkan username penerima!", false) return end
-    if not selectedItem then setStatus("Pilih item dulu!", false) return end
+    if not selectedItemName then setStatus("Pilih item dulu!", false) return end
 
     local amount = math.floor(tonumber(amountBox.Text) or 0)
     if amount <= 0 then setStatus("Amount harus lebih dari 0!", false) return end
-    if amount > selectedItem.count then setStatus("Amount melebihi stok di hotbar!", false) return end
+
+    -- Ambil ulang semua objek fisik kecocokan terkini
+    local allInventory = getInventoryItems()
+    local matchedTools = {}
+    for _, inv in pairs(allInventory) do
+        if inv.name == selectedItemName then
+            table.insert(matchedTools, inv.tool)
+        end
+    end
+
+    if amount > #matchedTools then
+        setStatus("Amount melebihi stok di hotbar (Stok: " .. #matchedTools .. ")!", false)
+        return
+    end
 
     isSending = true
     sendBtn.Text = "Sending..."
@@ -360,21 +361,23 @@ sendBtn.MouseButton1Click:Connect(function()
             sendBtn.Text = "Send Trade"; isSending = false return
         end
 
-        local category, itemKey = resolveItem(selectedItem.tool)
+        local category, itemKey = resolveItem(matchedTools[1])
 
         -- ==========================================================
-        -- FORMULASI DATA FIX UNTUK GEARES (MENGGUNAKAN STRING KEY)
+        -- LOGIKA GENERATE MULTIPLE PHYSICAL OBJECT UNTUK GEARS
         -- ==========================================================
         local payload = {}
         if category == "Gears" then
+            -- Masukkan objek fisik Tool yang berbeda sebanyak jumlah yang diminta
             for i = 1, amount do
                 table.insert(payload, {
-                    ItemKey  = itemKey,   -- Mengirim Nama String ("Common Sprinkler")
+                    ItemKey  = itemKey,
                     Category = "Gears",
                     Count    = 1
                 })
             end
         else
+            -- Sistem tumpukan normal untuk Seeds / Pets
             payload = {{
                 ItemKey  = itemKey,
                 Count    = amount,
@@ -386,7 +389,7 @@ sendBtn.MouseButton1Click:Connect(function()
         local sendOk, sendErr = sendInChunks(userId, payload)
         if sendOk then
             setStatus("Berhasil dikirim ke " .. recipient .. "!", true)
-            selectedItem = nil
+            selectedItemName = nil
             dropBtn.Text = "Pilih item..."
             amountBox.Text = "1"
         else
