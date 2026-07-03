@@ -33,29 +33,48 @@ local GEAR_NAMES = {
     ["Super Sprinkler"]       = true
 }
 
--- EKSTRAKSI KUNCI ASLI DARI SERVER UNTUK GEAR
 local function resolveItem(tool)
     local name = tool.Name
-    
-    local uuid = tool:GetAttribute("PetId") 
-        or tool:GetAttribute("Id") 
+
+    local uuid = tool:GetAttribute("PetId")
+        or tool:GetAttribute("Id")
         or tool:GetAttribute("UUID")
         or tool:GetAttribute("AssetId")
         or tool:GetAttribute("ItemID")
         or tool:GetAttribute("TemplateID")
-    
+
+    -- NORMALISASI CATEGORY LEBIH AMAN
     local category = "Seeds"
+
     if GEAR_NAMES[name] then
         category = "Gear"
     else
-        local attrCat = tool:GetAttribute("Category") or tool:GetAttribute("ItemType") or tool:GetAttribute("Type")
+        local attrCat =
+            tool:GetAttribute("Category")
+            or tool:GetAttribute("ItemType")
+            or tool:GetAttribute("Type")
+
         if attrCat then
-            category = tostring(attrCat)
-            if category == "Gears" then category = "Gear" end
+            local c = string.lower(tostring(attrCat))
+
+            if c == "gear" or c == "gears" then
+                category = "Gear"
+            else
+                category = attrCat
+            end
         end
     end
-    
-    local finalKey = (category == "Gear" and uuid) and tostring(uuid) or name
+
+    -- FIX KHUSUS ITEM GEAR (ini yang sering bikin Trade Sprinkler error)
+    local finalKey
+
+    if category == "Gear" then
+        -- fallback aman untuk Gear item
+        finalKey = uuid and tostring(uuid) or name
+    else
+        finalKey = name
+    end
+
     return category, finalKey
 end
 
